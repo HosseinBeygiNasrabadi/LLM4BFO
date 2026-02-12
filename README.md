@@ -14,6 +14,20 @@ This repository contains two desktop GUI applications:
 - **GUI-2: Ontology Evaluation (Comparison)**  
   Compares an LLM-generated ontology against a human ontology and exports the results to an Excel workbook (`.xlsx`).
 
+## Quick start
+
+```bash
+python -m venv .venv
+source .venv/bin/activate      # Windows: .\.venv\Scripts\Activate.ps1
+pip install -U pip
+pip install -r requirements.txt
+
+python ontology_gui_multi_model.py
+# or
+python ontology_eval_gui.py
+```
+
+For more detailed setup and troubleshooting, see `INSTALL.md`.
 
 ## Repository contents
 
