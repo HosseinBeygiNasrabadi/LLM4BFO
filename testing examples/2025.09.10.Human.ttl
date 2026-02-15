@@ -1,0 +1,280 @@
+@prefix : <http://www.semanticweb.org/hbn/ontologies/2025/5/untitled-ontology-209/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xml: <http://www.w3.org/XML/1998/namespace> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@base <http://www.semanticweb.org/hbn/ontologies/2025/5/untitled-ontology-209/> .
+
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo> rdf:type owl:Ontology ;
+                                                   owl:imports <http://purl.obolibrary.org/obo/bfo/2020/bfo.owl> ;
+                                                   <http://purl.org/dc/elements/1.1/contributor> "Farzaneh Mahdavi" ,
+                                                                                                 "Hossein Beygi Nasrabadi" ;
+                                                   <http://purl.org/dc/elements/1.1/license> "https://creativecommons.org/publicdomain/zero/1.0/" ;
+                                                   <http://purl.org/dc/terms/description> "Egg boiling ontology from ISO standard text" ;
+                                                   <http://purl.org/dc/terms/title> "egg boiling ontology" ;
+                                                   rdfs:label "ebo" ;
+                                                   owl:versionInfo "2025.09.10.HUMAN" .
+
+#################################################################
+#    Object Properties
+#################################################################
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000017
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000017> rdf:type owl:ObjectProperty ;
+                                                              rdfs:domain <http://purl.obolibrary.org/obo/BFO_0000031> ;
+                                                              rdfs:range <http://purl.obolibrary.org/obo/BFO_0000031> ;
+                                                              rdfs:comment "a property to which represents relation of several generally dependent continuants" ;
+                                                              rdfs:label "consistency"@en .
+
+
+#################################################################
+#    Data properties
+#################################################################
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000016
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000016> rdf:type owl:DatatypeProperty ;
+                                                              rdfs:comment "a property that relates any value to its related entity" ;
+                                                              rdfs:label "value"@en .
+
+
+#################################################################
+#    Classes
+#################################################################
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000001
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000001> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <http://purl.obolibrary.org/obo/BFO_0000015> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "boiling"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "Cooking in water at or near its boiling point (100 degreesC at sea level), with vigorous bubbling." .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000002
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000002> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <http://purl.obolibrary.org/obo/BFO_0000030> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "egg"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "An oval reproductive body produced by hens (Gallus gallus domesticus), consisting of a shell, albumen (egg white), and yolk." .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000003
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000003> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <http://purl.obolibrary.org/obo/BFO_0000030> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "ice water bath"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "Submersion in 0-4 degreesC water to rapidly cool eggs." .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000004
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000004> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <http://purl.obolibrary.org/obo/BFO_0000016> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "egg peelability"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "Ease of removing shell without damaging the white." .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000006
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000006> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <http://purl.obolibrary.org/obo/BFO_0000019> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "water boiling temperature"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "Water’s transition point to gas phase, nominally 100 degreesC at 1 atm." .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000007
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000007> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <http://purl.obolibrary.org/obo/BFO_0000038> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "water boiling time"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "Time eggs remain in boiling water, counted from start of active boiling." .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000008
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000008> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <http://purl.obolibrary.org/obo/BFO_0000019> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "egg size"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "Classification by mass" .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000009
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000009> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000008> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "small egg"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "< 53 g" .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000010
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000010> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000008> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "medium egg"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "53-63 g" .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000011
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000011> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000008> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "large egg"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "> 63-73 g" .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000012
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000012> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <http://purl.obolibrary.org/obo/BFO_0000019> ;
+                                                              rdfs:label "boiled egg hardness"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "a quality that represent the hardness degree of the boiled eggs" .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000013
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000013> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000012> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "soft boiled egg"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "White is set, yolk is fluid or semi-liquid." .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000014
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000014> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000012> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "medium boiled egg"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "White is fully set, yolk is thickened but not firm." .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000015
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000015> rdf:type owl:Class ;
+                                                              rdfs:subClassOf <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000012> ;
+                                                              rdfs:isDefinedBy "DIN ISO 3456:2025(E): Preparation of Boiled Chicken Eggs - Standard Procedure" ;
+                                                              rdfs:label "hard boiled egg"@en ;
+                                                              <http://www.w3.org/2004/02/skos/core#definition> "Both white and yolk are fully solid." .
+
+
+#################################################################
+#    Individuals
+#################################################################
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000018
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000018> rdf:type owl:NamedIndividual ,
+                                                                       <http://purl.obolibrary.org/obo/BFO_0000015> ;
+                                                              <http://purl.obolibrary.org/obo/BFO_0000059> <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000029> ;
+                                                              <http://purl.obolibrary.org/obo/BFO_0000063> <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000019> ;
+                                                              rdfs:label "preparation of boiled chicken egg_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000019
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000019> rdf:type owl:NamedIndividual ,
+                                                                       <http://purl.obolibrary.org/obo/BFO_0000015> ;
+                                                              <http://purl.obolibrary.org/obo/BFO_0000057> <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000022> ,
+                                                                                                           <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000023> ,
+                                                                                                           <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000024> ;
+                                                              <http://purl.obolibrary.org/obo/BFO_0000063> <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000020> ;
+                                                              rdfs:label "preparation_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000020
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000020> rdf:type owl:NamedIndividual ,
+                                                                       <http://purl.obolibrary.org/obo/BFO_0000015> ;
+                                                              <http://purl.obolibrary.org/obo/BFO_0000057> <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000025> ,
+                                                                                                           <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000026> ,
+                                                                                                           <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000027> ;
+                                                              <http://purl.obolibrary.org/obo/BFO_0000059> <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000030> ,
+                                                                                                           <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000031> ;
+                                                              <http://purl.obolibrary.org/obo/BFO_0000063> <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000021> ;
+                                                              rdfs:label "heating_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000021
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000021> rdf:type owl:NamedIndividual ,
+                                                                       <http://purl.obolibrary.org/obo/BFO_0000015> ;
+                                                              <http://purl.obolibrary.org/obo/BFO_0000057> <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000028> ;
+                                                              rdfs:label "cooling_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000022
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000022> rdf:type owl:NamedIndividual ,
+                                                                       <http://purl.obolibrary.org/obo/BFO_0000030> ;
+                                                              rdfs:label "pot_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000023
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000023> rdf:type owl:NamedIndividual ,
+                                                                       <http://purl.obolibrary.org/obo/BFO_0000040> ;
+                                                              rdfs:label "cold potable water_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000024
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000024> rdf:type owl:NamedIndividual ,
+                                                                       <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000002> ;
+                                                              rdfs:label "chicken egg_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000025
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000025> rdf:type owl:NamedIndividual ,
+                                                                       <http://purl.obolibrary.org/obo/BFO_0000030> ;
+                                                              <http://purl.obolibrary.org/obo/BFO_0000101> <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000030> ;
+                                                              rdfs:label "thermometer_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000026
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000026> rdf:type owl:NamedIndividual ,
+                                                                       <http://purl.obolibrary.org/obo/BFO_0000030> ;
+                                                              <http://purl.obolibrary.org/obo/BFO_0000101> <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000031> ;
+                                                              rdfs:label "timer_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000027
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000027> rdf:type owl:NamedIndividual ,
+                                                                       <http://purl.obolibrary.org/obo/BFO_0000030> ;
+                                                              rdfs:label "slotted spoon_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000028
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000028> rdf:type owl:NamedIndividual ,
+                                                                       <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000003> ;
+                                                              rdfs:label "ice water bath_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000029
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000029> rdf:type owl:NamedIndividual ,
+                                                                       <http://purl.obolibrary.org/obo/BFO_0000031> ;
+                                                              <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000016> "Preparation of Boiled Chicken Eggs - Standard Procedure"^^rdfs:Literal ;
+                                                              rdfs:label "DIN ISO 3456:2025(E)"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000030
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000030> rdf:type owl:NamedIndividual ,
+                                                                       <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000006> ;
+                                                              <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000016> "100 C ±1 C"^^rdfs:Literal ;
+                                                              rdfs:label "boiling temperature_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000031
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000031> rdf:type owl:NamedIndividual ,
+                                                                       <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000007> ;
+                                                              <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000017> <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000032> ,
+                                                                                                                            <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000033> ;
+                                                              <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000016> """| Consistency | S | M | L |
+|-------------|-----|-----|-----|
+| Soft | 4:00| 4:30| 5:00|
+| Medium | 6:00| 6:30| 7:00|
+| Hard | 9:00| 9:30|10:00|"""^^rdfs:Literal ;
+                                                              rdfs:label "boiling time_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000032
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000032> rdf:type owl:NamedIndividual ,
+                                                                       <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000008> ;
+                                                              rdfs:label "egg size_"@en .
+
+
+###  https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000033
+<https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000033> rdf:type owl:NamedIndividual ,
+                                                                       <https://github.com/ISE-FIZKarlsruhe/LLM4BFO/ebo/ebo_0000012> ;
+                                                              rdfs:label "boiled egg hardness_"@en .
+
+
+###  Generated by the OWL API (version 4.5.29.2024-05-13T12:11:03Z) https://github.com/owlcs/owlapi
