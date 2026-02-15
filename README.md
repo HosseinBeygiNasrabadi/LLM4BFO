@@ -86,6 +86,9 @@ pip install PyMuPDF
 python ontology_gui_multi_model.py
 ```
 
+<img width="570" height="415" alt="Screenshot 2026-02-15 at 13 37 20" src="https://github.com/user-attachments/assets/222e6d53-80b9-41b2-8201-fb990292412a" />
+
+
 ### Input Files
 The GUI accepts different types of input files like (`.pdf`), (`.xlsx` / `.xls`), and Ontology file (`.ttl` / `.owl`). The pipeline parses them and extracts terms and definitions.
 
@@ -104,6 +107,9 @@ The user should provide minimal information to run the GUI. This information inc
 ```bash
 python ontology_eval_gui.py
 ```
+
+<img width="570" height="241" alt="Screenshot 2026-02-15 at 13 38 42" src="https://github.com/user-attachments/assets/304eb07e-8ef5-48d0-9141-87c85a81cbdc" />
+
 
 ### Input Files
 Human ontology (`.ttl` or `.owl`) and LLM-created ontology (`.ttl` or `.owl`)
