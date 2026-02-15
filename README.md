@@ -1,84 +1,96 @@
 # LLM4BFO
-LLM-based development of BFO-compliant ontologies
+LLM4BFO is an interactive toolkit for the construction and evaluation of Basic Formal Ontology (BFO)-aligned ontologies using Large Language Models (LLMs).
 
-# Ontology Builder and Ontology Evaluation (GUI)
+The repository provides two desktop GUI applications that enable:
+- **Ontology Builder:** Automated ontology generation (`.ttl`) from conceptual source files (PDF, Excel, or TTL/OWL)
+- **Ontology Evaluation (Comparison):** Compares an LLM-generated ontology against a human ontology and exports the results to an Excel workbook (`.xlsx`).
 
-This repository contains two desktop GUI applications:
-
-- **GUI-1: Ontology Builder (OD)**  
-  Builds an ontology in Turtle (`.ttl`) from one input file:
-  - PDF (standard text)
-  - Excel (tabular text)
-  - TTL/OWL (existing ontology)
-
-- **GUI-2: Ontology Evaluation (Comparison)**  
-  Compares an LLM-generated ontology against a human ontology and exports the results to an Excel workbook (`.xlsx`).
-
-## Quick start
-
-```bash
-python -m venv .venv
-source .venv/bin/activate      # Windows: .\.venv\Scripts\Activate.ps1
-pip install -U pip
-pip install -r requirements.txt
-
-python ontology_gui_multi_model.py
-# or
-python ontology_eval_gui.py
+# Repository Structure
+```text
+LLM4BFO/
+│
+├── codes/
+│   │
+│   ├── Ontology Builder/
+│   │   ├── ontology_gui_multi_model.py
+│   │   │   # GUI-1 launcher (Ontology Builder)
+│   │   └── ontology_core_multi_model.py
+│   │       # GUI-1 pipeline logic: input parsing → LLM call → TTL generation → validation
+│   │
+│   └── Ontology Evaluation/
+│       ├── ontology_eval_gui.py
+│       │   # GUI-2 launcher (Ontology Evaluation + XLSX export)
+│       └── ontology_eval_core.py
+│           # GUI-2 evaluation logic: class extraction → matching → similarity → hierarchy evaluation
+│
+├── testing examples/
+│   ├── example_pdf_egg_boiling_recipe.pdf
+│   ├── example_excel_vickers_hardness_test.xlsx
+│   └── example_ontology_NFDIcore_v3.0.3.ttl
+│
+├── CITATION.cff
+├── LICENSE
+├── README.md
+└── requirements.txt
 ```
 
-For more detailed setup and troubleshooting, see `INSTALL.md`.
+# 🛠 Installation Guide
+## Requirements
+- Python 3.10+ (the code uses modern type syntax like `dict | None`)
+- A desktop environment that can run a Qt GUI (PyQt6)
+- Runtime internet access is required for calling the selected LLM provider (OpenAI / Anthropic / Gemini) and downloading the SentenceTransformer model used by evaluation (`BAAI/bge-large-en-v1.5`).
+- An LLM API key must be provided inside the GUI before ontology generation.
 
-## Repository contents
+## 1) Clone the repository
+```bash
+git clone https://github.com/HosseinBeygiNasrabadi/LLM4BFO.git
+cd LLM4BFO
+```
 
-- `ontology_gui_multi_model.py`  
-  GUI-1 launcher (Ontology Builder)
+## 2) Create and activate a virtual environment
+Linux/macOS:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
 
-- `ontology_core_multi_model.py`  
-  GUI-1 pipeline logic (input parsing + LLM call + TTL generation + validation)
+Windows (PowerShell):
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
 
-- `ontology_eval_gui.py`  
-  GUI-2 launcher (Ontology Evaluation + XLSX export)
+## 3) Install dependencies
 
-- `ontology_eval_core.py`  
-  GUI-2 evaluation logic (class extraction + matching + similarity + hierarchy evaluation)
+```bash
+pip install -U pip
+pip install -r requirements.txt
+```
 
+## Troubleshooting
+- **Qt / platform plugin errors (Linux):** Some Linux setups require additional system Qt runtime packages. Install the missing Qt runtime packages for your distribution, then retry.
 
-## GUI-1: Ontology Builder (OD)
+- **SentenceTransformer model download fails:** The evaluation uses SentenceTransformer model `BAAI/bge-large-en-v1.5`. If downloads are blocked, run in a network-enabled environment or pre-download the model.
+  
+- **`ModuleNotFoundError: No module named 'fitz'`**: PyMuPDF is missing:
 
-### Inputs
-The GUI accepts one input file:
+```bash
+pip install PyMuPDF
+```
 
-1) **PDF (`.pdf`)**
-- The pipeline extracts **Section 3 (Terms and definitions)**.
-- It expects term identifiers starting with `3...` such as `3.1`, `3.2.1`, etc.
-- Each term is extracted as:
-  - `num` (the section number, e.g., `3.2.1`)
-  - `label`
-  - `definition` (inline after `:` or dash, and/or block text below)
+# ▶️ Running the Applications
 
-2) **Excel (`.xlsx` / `.xls`)**
-- The first row must be a header row.
-- Required header column: **`Term`**
-- Optional header column: **`Definition`**
-- Each non-empty `Term` row becomes a class.
-- Terms are assigned sequential numeric IDs (`1`, `2`, `3`, ...) internally.
+## Run Ontology Builder
 
-3) **Ontology file (`.ttl` / `.owl`)**
-- The pipeline parses RDF and extracts **local** `owl:Class` nodes (local namespace is inferred from ontology metadata and/or dominant namespaces).
-- It also extracts local subclass relations to build an internal hierarchy.
+```bash
+python ontology_gui_multi_model.py
+```
 
-### GUI fields (exactly as implemented)
-- Provider: `OpenAI` / `Anthropic` / `Gemini`
-- API key (label changes with provider)
-- Model name (defaults change with provider)
-- Metadata:
-  - Title
-  - Label
-  - Description
-  - Version
-  - Domain
-  - Ontology IRI
+### Input Files
+The GUI accepts different types of input files like (`.pdf`), (`.xlsx` / `.xls`), and Ontology file (`.ttl` / `.owl`). The pipeline parses them and extracts terms and definitions.
+
+### User Inputs
+The user should provide minimal information to run the GUI. This information includes LLM provider (`OpenAI` / `Anthropic` / `Gemini`), API key (label changes with provider), model name (defaults change with provider), and main ontology metadata like ontology title, label, description, version, domain, and ontology IRI.
 
 ### Output
 - Output is a Turtle file (`.ttl`) written to the chosen path.
@@ -86,73 +98,22 @@ The GUI accepts one input file:
   - A required ontology header with `owl:imports` for **BFO 2020**
   - Class IRIs derived from the provided **Ontology IRI** (base IRI) and a normalized label policy
   - Class blocks with `rdfs:label` and `skos:definition` fields (including “Original” and “Aristotelian” definitions)
+    
+## Run Ontology Evaluation (Comparison)
 
-### How to run GUI-1
-```bash
-python ontology_gui_multi_model.py
-```
-
-## GUI-2: Ontology Evaluation (Comparison)
-
-### Inputs
-
-- Human ontology: .ttl or .owl
-
-- Model ontology: .ttl or .owl
-
-### What is computed
-
-- Ontology header comparison (basic metadata inspection)
-
-- Extraction of class sets from both ontologies
-
-- Label-level fuzzy matching (SequenceMatcher ratio, threshold = 0.70)
-
-- Definition similarity (sentence embeddings using BAAI/bge-large-en-v1.5)
-
-- Hierarchy comparison based on extracted BFO parent information from matched classes
-
-- Precision / Recall / F1 for:
-
-  - label-level matching
-
-  - hierarchy-level matching
-
-### Output
-
-The GUI exports an Excel workbook next to the model ontology, in:
-
-- Directory: ontology_eval_xlsx_<model_basename>/
-
-- File: <model_basename>_results.xlsx
-
-The workbook contains these sheets (exact names):
-
-- 00_header_comparison
-
-- 01_groundtruth_classes
-
-- 02_model_extracted_classes
-
-- 03_label_level_matches
-
-- 04_label_level_f1
-
-- 05_definition_similarity
-
-- 06_hierarchy_evaluation
-
-- 07_hierarchy_f1
-
-- 08_evaluation_summary
-
-How to run GUI-2
 ```bash
 python ontology_eval_gui.py
 ```
 
-## Notes
+### Input Files
+Human ontology (`.ttl` or `.owl`) and LLM-created ontology (`.ttl` or `.owl`)
 
-- GUI-2 downloads an embedding model (BAAI/bge-large-en-v1.5) via sentence-transformers the first time it runs (internet required).
+### Outputs
+The comparison results are shown in GUI, and the results are also exported as an Excel workbook next to the model ontology. The comparison topics include: header_comparison, groundtruth_classes, model_extracted_classes, label_level_matches, label_level_f1, definition_similarity, hierarchy_evaluation, hierarchy_f1, and evaluation_summary
 
-- API keys are entered in the GUI. The code does not implement persistent secret storage in this repository.
+# License
+This project is released under the MIT License.
+
+# Citation
+If you use this software in academic work, please cite it using the CITATION.cff file included in this repository.
+
