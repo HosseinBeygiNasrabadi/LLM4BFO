@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this tool, please cite it as below."
+title: "LLM4BFO: Large Language Models for Building BFO-Aligned Ontologies"
+authors:
+  - given-names: Hossein
+    family-names: Beygi Nasrabadi
+  - given-names: Farzaneh
+    family-names: Mahdavi
+version: "1.0.0"
+date-released: "2026-02-11"
+identifiers:
+  - type: url
+    value: "https://github.com/HosseinBeygiNasrabadi/LLM4BFO"
+license: "MIT"
+abstract: "LLM4BFO is a toolkit for building BFO-compliant ontologies using large language models."
+keywords:
+  - ontology
+  - BFO
+  - LLM
