@@ -14,10 +14,65 @@ from rdflib import Graph, RDF, RDFS, URIRef
 from rdflib.namespace import OWL, Namespace
 import pandas as pd
 from ontology_eval_core import run_full_eval, parse_rdf_graph, select_local_class_nodes
+from collections import defaultdict
 
 DC = Namespace("http://purl.org/dc/elements/1.1/")
 DCT = Namespace("http://purl.org/dc/terms/")
 
+def compute_local_hierarchy_stats(path: str):
+    g, nodes = select_local_class_nodes(path)
+
+    local_nodes = {n for n in nodes if isinstance(n, URIRef)}
+    if not local_nodes:
+        return 0, 0.0, 0.0
+
+    parents = defaultdict(set)
+    children = defaultdict(set)
+
+    for child in local_nodes:
+        for parent in g.objects(child, RDFS.subClassOf):
+            if isinstance(parent, URIRef) and parent in local_nodes:
+                parents[child].add(parent)
+                children[parent].add(child)
+
+    # Local roots = local classes with no local parent
+    roots = [n for n in local_nodes if len(parents[n]) == 0]
+
+    memo = {}
+
+    def depth_from(node, visiting=None):
+        if node in memo:
+            return memo[node]
+
+        if visiting is None:
+            visiting = set()
+
+        if node in visiting:
+            return 1  # cycle guard
+
+        visiting.add(node)
+
+        node_children = children.get(node, set())
+        if not node_children:
+            d = 1
+        else:
+            d = 1 + max(depth_from(ch, visiting) for ch in node_children)
+
+        visiting.remove(node)
+        memo[node] = d
+        return d
+
+    if roots:
+        max_depth = max(depth_from(r) for r in roots)
+    else:
+        max_depth = max(depth_from(n) for n in local_nodes)
+
+    branch_counts = [len(children[n]) for n in local_nodes if len(children[n]) > 0]
+
+    max_branching = max(branch_counts) if branch_counts else 0.0
+    avg_branching = sum(branch_counts) / len(branch_counts) if branch_counts else 0.0
+
+    return max_depth, max_branching, avg_branching
 
 def extract_ontology_header(path: str):
     g = parse_rdf_graph(path)
@@ -212,15 +267,50 @@ class App(QMainWindow):
             str(count_local_classes(self.model.text())),
         ])
 
+        h_depth, h_max_branch, h_avg_branch = compute_local_hierarchy_stats(self.human.text())
+        m_depth, m_max_branch, m_avg_branch = compute_local_hierarchy_stats(self.model.text())
+
+        rows.append([
+            "Hierarchy depth",
+            str(h_depth),
+            str(m_depth),
+        ])
+
+        rows.append([
+            "Maximum branching factor",
+            f"{h_max_branch:.4f}",
+            f"{m_max_branch:.4f}",
+        ])
+
+        rows.append([
+            "Average branching factor",
+            f"{h_avg_branch:.4f}",
+            f"{m_avg_branch:.4f}",
+        ])
+        
         header_df = pd.DataFrame(rows, columns=["Property", "Human", "Model"])
         self.add_table("Ontology header comparison (Human vs Model)", header_df)
         self.add_table("Ground-truth classes", res["df_groundtruth"])
         self.add_table("Model-extracted classes", res["df_predicted"])
-        self.add_table("Label-level matches", res["df_results"])
+        df_display = res["df_results"][[
+            "GT term",
+            "LLM term",
+            "GT definition",
+            "LLM definition",
+            "Label lexical similarity",
+            "Semantic similarity",
+            "Match type",
+            "Label Match",
+        ]].rename(columns={
+            "Semantic similarity": "Label:Definition Semantic similarity"
+        })
+        self.add_table("Label-level matches", df_display)
+        self.add_table("Lexical label match F1", res["df_lexical_metrics"])
         self.add_table("Label-level F1", res["df_metrics"])
-        self.add_table("Definition-level similarity", res["df_matched_def_sim"])
-        self.add_table("Hierarchy-based evaluation", res["res_evaluation"])
-        self.add_table("Hierarchy-based F1", res["res_f1"])
+        self.add_table("BFO Hierarchy-based evaluation", res["res_evaluation"])
+        self.add_table("BFO Hierarchy-based F1", res["res_f1"])
+        self.add_table("Local-parent hierarchy evaluation", res["res_local_parent_evaluation"])
+        self.add_table("Local-parent hierarchy F1", res["res_local_parent_f1"])
 
         # =========================================================
         # Evaluation summary table 
@@ -234,7 +324,6 @@ class App(QMainWindow):
         human_class_n = int(res["df_groundtruth"].shape[0])
         model_class_n = int(res["df_predicted"].shape[0])
 
-
         label_f1 = 0.0
         if isinstance(res.get("df_metrics"), pd.DataFrame) and not res["df_metrics"].empty:
             label_f1 = float(res["df_metrics"].iloc[0].get("F1", 0.0))
@@ -243,21 +332,35 @@ class App(QMainWindow):
         if isinstance(res.get("res_f1"), pd.DataFrame) and not res["res_f1"].empty:
             hier_f1 = float(res["res_f1"].iloc[0].get("F1", 0.0))
 
+        local_parent_f1 = 0.0
+        if isinstance(res.get("res_local_parent_f1"), pd.DataFrame) and not res["res_local_parent_f1"].empty:
+            local_parent_f1 = float(res["res_local_parent_f1"].iloc[0].get("F1", 0.0))
+
+        lexical_f1 = 0.0
+        if isinstance(res.get("df_lexical_metrics"), pd.DataFrame) and not res["df_lexical_metrics"].empty:
+            lexical_f1 = float(res["df_lexical_metrics"].iloc[0].get("F1", 0.0))
+
         def_sim_pct = 0.0
-        df_defs = res.get("df_matched_def_sim")
-        if isinstance(df_defs, pd.DataFrame) and not df_defs.empty and "definition_cosine_similarity" in df_defs.columns:
-            sims = pd.to_numeric(df_defs["definition_cosine_similarity"], errors="coerce")
+
+        df_matches = res.get("df_results")
+        if isinstance(df_matches, pd.DataFrame) and not df_matches.empty:
+            df_matched_only = df_matches[df_matches["Label Match"] == "✔"].copy()
+            sims = pd.to_numeric(df_matched_only["Semantic similarity"], errors="coerce")
             m = sims.mean(skipna=True)
             if pd.notna(m):
                 def_sim_pct = round(float(m) * 100.0, 2)
+            else:
+                def_sim_pct = 0.0
 
         summary_df = pd.DataFrame([{
             "Name of ontology": model_label,
             "Number of Human classes": human_class_n,
             "Number of LLM classes": model_class_n,
+            "Lexical Label Match F1": round(lexical_f1, 4),
             "Classes Label Match F1": round(label_f1, 4),
-            "Classes Definition Similarity (%)": def_sim_pct,
-            "Classes Hierarchy Match F1": round(hier_f1, 4),
+            "Label:Definition Semantic Similarity Average (%)": def_sim_pct,
+            "Classes BFO Hierarchy Match F1": round(hier_f1, 4),
+            "Local Parent Hierarchy Match F1": round(local_parent_f1, 4),
         }])
 
         self.add_table("Ontology classes evaluation summary", summary_df)
@@ -279,11 +382,13 @@ class App(QMainWindow):
             res["df_groundtruth"].to_excel(writer, sheet_name="01_groundtruth_classes", index=False)
             res["df_predicted"].to_excel(writer, sheet_name="02_model_extracted_classes", index=False)
             res["df_results"].to_excel(writer, sheet_name="03_label_level_matches", index=False)
-            res["df_metrics"].to_excel(writer, sheet_name="04_label_level_f1", index=False)
-            res["df_matched_def_sim"].to_excel(writer, sheet_name="05_definition_similarity", index=False)
-            res["res_evaluation"].to_excel(writer, sheet_name="06_hierarchy_evaluation", index=False)
+            res["df_lexical_metrics"].to_excel(writer, sheet_name="04_lexical_label_match_f1", index=False)
+            res["df_metrics"].to_excel(writer, sheet_name="05_label_level_f1", index=False)
+            res["res_evaluation"].to_excel(writer, sheet_name="06_BFO_hierarchy_evaluation", index=False)
             res["res_f1"].to_excel(writer, sheet_name="07_hierarchy_f1", index=False)
-            summary_df.to_excel(writer, sheet_name="08_evaluation_summary", index=False)
+            res["res_local_parent_evaluation"].to_excel(writer, sheet_name="08_local_parent_hierarchy", index=False)
+            res["res_local_parent_f1"].to_excel(writer, sheet_name="09_local_parent_hierarchy_f1", index=False)
+            summary_df.to_excel(writer, sheet_name="10_evaluation_summary", index=False)
 
         self.status.setText(f"XLSX exported to: {out_path}")
 

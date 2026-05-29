@@ -2,7 +2,7 @@
 import os
 import re
 import pandas as pd
-from typing import Optional, List, Tuple, Set
+from typing import Optional, List, Tuple, Set, Dict
 from difflib import SequenceMatcher
 from collections import defaultdict, Counter
 
@@ -12,6 +12,11 @@ from owlready2 import get_ontology
 from rdflib import Graph
 from rdflib.namespace import DC, DCTERMS
 from rdflib.collection import Collection
+
+from functools import lru_cache
+import numpy as np
+from sentence_transformers import SentenceTransformer
+import jellyfish
 # =================================================
 # CONSTANTS
 # =================================================
@@ -21,10 +26,23 @@ OBO = Namespace("http://purl.obolibrary.org/obo/")
 VANN = Namespace("http://purl.org/vocab/vann/")
 IAO_DEF = OBO["IAO_0000115"]  # definition predicate used by many OBO OWL files
 SCHEMA = Namespace("http://schema.org/")
-
+OBO_PURL_DIR = "http://purl.obolibrary.org/obo/"
+OBOINOWL = Namespace("http://www.geneontology.org/formats/oboInOwl#")
 # =================================================
 # BASIC HELPERS
 # =================================================
+
+def jaro_winkler_sim(a: str, b: str) -> float:
+    a = norm(a)
+    b = norm(b)
+    if not a or not b:
+        return 0.0
+    return float(jellyfish.jaro_winkler_similarity(a, b))
+
+def build_semantic_text(label: str, definition: str) -> str:
+    label = (label or "").strip()
+    definition = (definition or "").strip()
+    return f"{label}: {definition}" if definition else label
 
 def _looks_like_html_file(path: str) -> bool:
     try:
@@ -97,8 +115,100 @@ def parse_rdf_graph_closure(path: str, import_map=None):
     _load(path)
     return g_all
 
-OBO_PURL_DIR = "http://purl.obolibrary.org/obo/"
-OBOINOWL = Namespace("http://www.geneontology.org/formats/oboInOwl#")
+@lru_cache(maxsize=1)
+def get_text_encoder(model_name: str = "all-MiniLM-L6-v2"):
+    return SentenceTransformer(model_name)
+
+def _cosine_from_normalized(v1, v2) -> Optional[float]:
+    if v1 is None or v2 is None:
+        return None
+    return float(np.dot(v1, v2))
+
+
+def _encode_unique_texts(texts: List[str], encoder) -> Dict[str, np.ndarray]:
+    unique_texts = []
+    seen = set()
+
+    for t in texts:
+        t = (t or "").strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        unique_texts.append(t)
+
+    if not unique_texts:
+        return {}
+
+    embs = encoder.encode(
+        unique_texts,
+        normalize_embeddings=True,
+        show_progress_bar=False
+    )
+    return {t: e for t, e in zip(unique_texts, embs)}
+
+
+def _extract_definition_fields(defs: List[str]) -> Dict[str, str]:
+    original = ""
+    aristotelian = ""
+    any_def = ""
+
+    for d in defs:
+        ds = str(d).strip()
+        if not ds:
+            continue
+        if not any_def:
+            any_def = ds
+        if ds.lower().startswith("original:") and not original:
+            original = ds
+        if ds.lower().startswith("aristotelian:") and not aristotelian:
+            aristotelian = ds
+
+    if not original:
+        for d in defs:
+            ds = str(d).strip()
+            if ds and not ds.lower().startswith("aristotelian:"):
+                original = ds
+                break
+
+    preferred = aristotelian or original or any_def or ""
+
+    return {
+        "original": original,
+        "aristotelian": aristotelian,
+        "any": any_def,
+        "preferred": preferred,
+    }
+
+
+def extract_class_text_map(path: str) -> Dict[str, Dict[str, str]]:
+    g, nodes = select_local_class_nodes(path)
+    def_props = discover_definition_predicates_human(g)
+
+    out: Dict[str, Dict[str, str]] = {}
+
+    for cls in nodes:
+        if not isinstance(cls, URIRef):
+            continue
+
+        lbl = label_like_pipeline(g, cls)
+
+        defs = []
+        for prop in def_props:
+            for o in g.objects(cls, prop):
+                defs.append(str(o))
+
+        def_info = _extract_definition_fields(defs)
+
+        out[str(cls)] = {
+            "label": lbl,
+            "label_norm": norm(lbl),
+            "definition": def_info["preferred"],
+            "definition_original": def_info["original"],
+            "definition_aristotelian": def_info["aristotelian"],
+            "definition_any": def_info["any"],
+        }
+
+    return out
 
 def _local_name_from_uri(uri: str) -> str:
     # fragment after # or last path segment
@@ -362,6 +472,14 @@ _DEF_NAME_RX = re.compile(
     re.IGNORECASE
 )
 
+_EXCLUDED_DEF_PROPS = {
+    OBO["IAO_0000119"],  # definition source
+    DCTERMS.source,
+    DC.source,
+}
+
+_EXCLUDED_DEF_LABEL_RX = re.compile(r"source|citation|reference", re.IGNORECASE)
+
 def _local_name(uri: str) -> str:
     if "#" in uri:
         return uri.rsplit("#", 1)[-1]
@@ -400,10 +518,19 @@ def discover_definition_predicates_human(g: Graph) -> List[URIRef]:
     # --------------------------------------------------------------------------
 
     def looks_definition_like(p: URIRef) -> bool:
+        if p in _EXCLUDED_DEF_PROPS:
+            return False
+
         name = _local_name(str(p))
         labels = [str(lit) for lit in g.objects(p, RDFS.label)]
-        return _DEF_NAME_RX.search(name) or any(_DEF_NAME_RX.search(l) for l in labels)
 
+        if _EXCLUDED_DEF_LABEL_RX.search(name):
+            return False
+        if any(_EXCLUDED_DEF_LABEL_RX.search(l) for l in labels):
+            return False
+
+        return _DEF_NAME_RX.search(name) or any(_DEF_NAME_RX.search(l) for l in labels)
+    
     for p in sorted([p for p in candidates if isinstance(p, URIRef)], key=lambda u: str(u)):
         if p not in seen and looks_definition_like(p):
             add(p)
@@ -649,7 +776,46 @@ def first_bfo_from_graph(graph: Graph, class_label: str) -> Optional[str]:
 
     return None
 
-from rdflib.collection import Collection
+def first_local_parent_from_node(graph: Graph, start_node, local_nodes: Set[URIRef]) -> Optional[str]:
+    """
+    Return the nearest ancestor of start_node that belongs to local_nodes,
+    excluding start_node itself.
+
+    Traverses upward via rdfs:subClassOf.
+    If multiple ancestors are found at the same distance, return the one
+    with lexicographically smallest URI for deterministic behavior.
+    """
+    visited = set()
+    current_level = [start_node]
+
+    while current_level:
+        next_level = []
+        local_candidates = []
+
+        for node in current_level:
+            if node in visited:
+                continue
+            visited.add(node)
+
+            for parent in graph.objects(node, RDFS.subClassOf):
+                if not isinstance(parent, URIRef):
+                    continue
+
+                if parent in visited:
+                    continue
+
+                if parent in local_nodes and parent != start_node:
+                    local_candidates.append(parent)
+                else:
+                    next_level.append(parent)
+
+        if local_candidates:
+            local_candidates = sorted(local_candidates, key=lambda x: str(x))
+            return str(local_candidates[0])
+
+        current_level = next_level
+
+    return None
 
 def first_bfo_from_node(graph: Graph, start_node) -> Optional[str]:
     """
@@ -722,25 +888,39 @@ def _get_local_namespace_uris(graph: Graph) -> Set[str]:
 def extract_local_classes_from_path(path: str) -> pd.DataFrame:
     g_local, nodes = select_local_class_nodes(path)
 
-    # Useing closure graph for BFO traversal
-    g_closure = parse_rdf_graph_closure(path, import_map=None)  
+    # Using closure graph for BFO traversal
+    g_closure = parse_rdf_graph_closure(path, import_map=None)
+
+    local_nodes = {n for n in nodes if isinstance(n, URIRef)}
 
     rows = []
     for cls in nodes:
         if not isinstance(cls, URIRef):
-            continue  
+            continue
 
-        lbl = label_like_pipeline(g_local, cls)  # keeping label source stable
-        bfo = first_bfo_from_node(g_closure, cls)  # traverse on closure
+        lbl = label_like_pipeline(g_local, cls)
+        bfo = first_bfo_from_node(g_closure, cls)
+        local_parent_uri = first_local_parent_from_node(g_local, cls, local_nodes)
+
+        local_parent_label = None
+        if local_parent_uri is not None:
+            parent_node = URIRef(local_parent_uri)
+            local_parent_label = label_like_pipeline(g_local, parent_node)
 
         rows.append({
             "URI": str(cls),
             "Class": lbl,
-            "BFO Parent": bfo
+            "BFO Parent": bfo,
+            "Local Parent URI": local_parent_uri,
+            "Local Parent": local_parent_label,
         })
 
-    return pd.DataFrame(rows).drop_duplicates(subset=["URI"]) \
-         .sort_values("Class").reset_index(drop=True)
+    return (
+        pd.DataFrame(rows)
+        .drop_duplicates(subset=["URI"])
+        .sort_values("Class")
+        .reset_index(drop=True)
+    )
 
 def extract_ground_truth_classes(path: str) -> pd.DataFrame:
     return extract_local_classes_from_path(path)
@@ -769,65 +949,221 @@ def _best_fuzzy_match(term: str, candidates: list[str]) -> tuple[str | None, flo
             best, best_score = c, score
     return best, best_score
 
-def label_match_eval(df_gt, df_pred, threshold=0.70):
-    # keeping row identity (important if there are duplicates)
+def label_match_eval(
+    df_gt,
+    df_pred,
+    human_ttl: Optional[str] = None,
+    model_ttl: Optional[str] = None,
+    lexical_threshold: float = 0.80,
+    semantic_threshold: float = 0.75,
+    semantic_model_name: str = "all-MiniLM-L6-v2",
+):
     gt_items = df_gt[["URI", "Class"]].reset_index(drop=True).copy()
     pr_items = df_pred[["URI", "Class"]].reset_index(drop=True).copy()
 
     gt_items["norm"] = gt_items["Class"].map(norm)
     pr_items["norm"] = pr_items["Class"].map(norm)
 
-    # build all candidate pairs above threshold
-    pairs = []
-    for gi, gnorm in enumerate(gt_items["norm"]):
-        for pj, pnorm in enumerate(pr_items["norm"]):
-            score = SequenceMatcher(None, gnorm, pnorm).ratio()
-            if score >= threshold:
-                pairs.append((score, gi, pj))
+    # -------------------------------------------------
+    # Load labels + definitions
+    # -------------------------------------------------
+    gt_meta = extract_class_text_map(human_ttl) if human_ttl else {}
+    pr_meta = extract_class_text_map(model_ttl) if model_ttl else {}
 
-    # sort by score descending (deterministic tie-breakers)
-    pairs.sort(key=lambda x: (-x[0], x[1], x[2]))
+    # Fallback if metadata was not found in the TTL/OWL
+    for i in range(len(gt_items)):
+        uri = str(gt_items.at[i, "URI"])
+        if uri not in gt_meta:
+            gt_meta[uri] = {
+                "label": gt_items.at[i, "Class"],
+                "label_norm": gt_items.at[i, "norm"],
+                "definition": "",
+            }
+
+    for i in range(len(pr_items)):
+        uri = str(pr_items.at[i, "URI"])
+        if uri not in pr_meta:
+            pr_meta[uri] = {
+                "label": pr_items.at[i, "Class"],
+                "label_norm": pr_items.at[i, "norm"],
+                "definition": "",
+            }
+
+    # -------------------------------------------------
+    # Step 1: lexical matching with Jaro-Winkler
+    # all pairs above threshold are candidates
+    # then select one-to-one greedily by score
+    # -------------------------------------------------
+    lexical_candidates = []
+
+    for gi in range(len(gt_items)):
+        gt_uri = str(gt_items.at[gi, "URI"])
+        gt_label = gt_meta[gt_uri]["label"]
+
+        for pj in range(len(pr_items)):
+            pr_uri = str(pr_items.at[pj, "URI"])
+            pr_label = pr_meta[pr_uri]["label"]
+
+            lex_score = jaro_winkler_sim(gt_label, pr_label)
+
+            if lex_score > lexical_threshold:
+                lexical_candidates.append((lex_score, gi, pj))
+
+    lexical_candidates.sort(key=lambda x: (-x[0], x[1], x[2]))
 
     gt_used = set()
     pr_used = set()
-    match_for_gt = [None] * len(gt_items)
-    score_for_gt = [0.0] * len(gt_items)
 
-    # assign best available pairs first
-    for score, gi, pj in pairs:
+    match_for_gt = [None] * len(gt_items)
+    lexical_for_gt = [None] * len(gt_items)
+    semantic_for_gt = [None] * len(gt_items)
+    match_type_for_gt = [None] * len(gt_items)
+
+    for lex_score, gi, pj in lexical_candidates:
         if gi in gt_used or pj in pr_used:
             continue
+
         gt_used.add(gi)
         pr_used.add(pj)
-        match_for_gt[gi] = pj
-        score_for_gt[gi] = score
 
-    # build result rows in GT order
-    rows = []
+        match_for_gt[gi] = pj
+        lexical_for_gt[gi] = lex_score
+        match_type_for_gt[gi] = "lexical"
+
+    # -------------------------------------------------
+    # Build semantic texts and embeddings for ALL items
+    # This allows semantic similarity to be reported
+    # even for lexically matched pairs.
+    # -------------------------------------------------
+    encoder = get_text_encoder(semantic_model_name)
+
+    gt_text_by_idx = {}
+    pr_text_by_idx = {}
+
     for gi in range(len(gt_items)):
         gt_uri = str(gt_items.at[gi, "URI"])
-        gt_norm = gt_items.at[gi, "norm"]
+        gt_text_by_idx[gi] = build_semantic_text(
+            gt_meta[gt_uri].get("label", ""),
+            gt_meta[gt_uri].get("definition", ""),
+        )
 
+    for pj in range(len(pr_items)):
+        pr_uri = str(pr_items.at[pj, "URI"])
+        pr_text_by_idx[pj] = build_semantic_text(
+            pr_meta[pr_uri].get("label", ""),
+            pr_meta[pr_uri].get("definition", ""),
+        )
+
+    all_texts = list(gt_text_by_idx.values()) + list(pr_text_by_idx.values())
+    emb_map = _encode_unique_texts(all_texts, encoder)
+
+    # -------------------------------------------------
+    # Step 2: semantic matching on remaining items only
+    # For each remaining generated entity, find the best
+    # gold match. Keep it only if cosine similarity > threshold.
+    # -------------------------------------------------
+    remaining_gt = [gi for gi in range(len(gt_items)) if gi not in gt_used]
+    remaining_pr = [pj for pj in range(len(pr_items)) if pj not in pr_used]
+
+    if remaining_gt and remaining_pr:
+        semantic_candidates = []
+
+        for gi in remaining_gt:
+            gt_vec = emb_map.get(gt_text_by_idx[gi])
+            if gt_vec is None:
+                continue
+
+            best_pj = None
+            best_score = -1.0
+
+            for pj in remaining_pr:
+                if pj in pr_used:
+                    continue
+
+                pr_vec = emb_map.get(pr_text_by_idx[pj])
+                if pr_vec is None:
+                    continue
+
+                sem_score = _cosine_from_normalized(gt_vec, pr_vec)
+                if sem_score is None:
+                    continue
+
+                if sem_score > best_score:
+                    best_score = sem_score
+                    best_pj = pj
+
+            if best_pj is not None and best_score > semantic_threshold:
+                semantic_candidates.append((best_score, gi, best_pj))
+
+        semantic_candidates.sort(key=lambda x: (-x[0], x[1], x[2]))
+
+        for sem_score, gi, pj in semantic_candidates:
+            if gi in gt_used or pj in pr_used:
+                continue
+
+            gt_used.add(gi)
+            pr_used.add(pj)
+
+            match_for_gt[gi] = pj
+            semantic_for_gt[gi] = sem_score
+            match_type_for_gt[gi] = "semantic"
+
+    # -------------------------------------------------
+    # Compute semantic similarity for ALL final matched pairs
+    # including lexical matches
+    # -------------------------------------------------
+    for gi in range(len(gt_items)):
         pj = match_for_gt[gi]
         if pj is None:
+            continue
+
+        gt_vec = emb_map.get(gt_text_by_idx[gi])
+        pr_vec = emb_map.get(pr_text_by_idx[pj])
+
+        sem_score = _cosine_from_normalized(gt_vec, pr_vec)
+        semantic_for_gt[gi] = sem_score
+
+    # -------------------------------------------------
+    # Build output table
+    # -------------------------------------------------
+    rows = []
+
+    for gi in range(len(gt_items)):
+        gt_uri = str(gt_items.at[gi, "URI"])
+        gt_term = gt_items.at[gi, "norm"]
+        gt_def = gt_meta.get(gt_uri, {}).get("definition", "")
+
+        pj = match_for_gt[gi]
+
+        if pj is None:
             rows.append({
-                "GT URI": gt_uri,
-                "Ground Truth Term": gt_norm,
-                "Pred URI": None,
-                "Matched Term": None,
+                "GT term": gt_term,
+                "LLM term": None,
+                "GT definition": gt_def,
+                "LLM definition": None,
+                "Label lexical similarity": None,
+                "Semantic similarity": None,
+                "Match type": None,
                 "Label Match": "✗",
-                "Score": round(score_for_gt[gi], 4),
+                "GT URI": gt_uri,
+                "Pred URI": None,
             })
         else:
             pr_uri = str(pr_items.at[pj, "URI"])
-            pr_norm = pr_items.at[pj, "norm"]
+            pr_term = pr_items.at[pj, "norm"]
+            pr_def = pr_meta.get(pr_uri, {}).get("definition", "")
+
             rows.append({
-                "GT URI": gt_uri,
-                "Ground Truth Term": gt_norm,
-                "Pred URI": pr_uri,
-                "Matched Term": pr_norm,
+                "GT term": gt_term,
+                "LLM term": pr_term,
+                "GT definition": gt_def,
+                "LLM definition": pr_def,
+                "Label lexical similarity": round(lexical_for_gt[gi], 4) if lexical_for_gt[gi] is not None else None,
+                "Semantic similarity": round(semantic_for_gt[gi], 4) if semantic_for_gt[gi] is not None else None,
+                "Match type": match_type_for_gt[gi],
                 "Label Match": "✔",
-                "Score": round(score_for_gt[gi], 4),
+                "GT URI": gt_uri,
+                "Pred URI": pr_uri,
             })
 
     df = pd.DataFrame(rows)
@@ -846,136 +1182,6 @@ def label_match_eval(df_gt, df_pred, threshold=0.70):
     return df, df_metrics
 
 # =================================================
-# Definition Similarity
-# =================================================
-
-def definition_similarity(df_matches, human_ttl, model_ttl):
-    from sentence_transformers import SentenceTransformer
-    import numpy as np
-
-    model = SentenceTransformer("BAAI/bge-large-en-v1.5")
-
-    def load_defs_human(path):
-        g = parse_rdf_graph(path)
-        def_props = discover_definition_predicates_human(g)
-
-        out = {}  # norm(label) -> {"original": str, "aristotelian": str, "any": str}
-
-        for cls in g.subjects(RDF.type, OWL.Class):
-            if not isinstance(cls, URIRef):
-                continue
-
-            lbl = best_label(g, cls)
-            k = norm(lbl)
-
-            defs = []
-            for prop in def_props:
-                for o in g.objects(cls, prop):
-                    defs.append(str(o))
-
-            original = ""
-            arist = ""
-            any_def = ""
-
-            for d in defs:
-                ds = d.strip()
-                if not any_def and ds:
-                    any_def = ds
-                if ds.lower().startswith("original:") and not original:
-                    original = ds
-                if ds.lower().startswith("aristotelian:") and not arist:
-                    arist = ds
-
-            if not original:
-                for d in defs:
-                    ds = d.strip()
-                    if ds and not ds.lower().startswith("aristotelian:"):
-                        original = ds
-                        break
-
-            out[k] = {"original": original, "aristotelian": arist, "any": any_def}
-
-        return out
-
-    def load_defs_model(path):
-        g = parse_rdf_graph(path)
-
-        out = {}  # norm(label) -> {"original": str, "aristotelian": str, "any": str}
-
-        for cls in g.subjects(RDF.type, OWL.Class):
-            if not isinstance(cls, URIRef):
-                continue
-
-            lbl = best_label(g, cls)
-            k = norm(lbl)
-
-            defs = []
-  
-            for o in g.objects(cls, SKOS.definition):
-                defs.append(str(o))
-
-            original = ""
-            arist = ""
-            any_def = ""
-
-            for d in defs:
-                ds = d.strip()
-                if not any_def and ds:
-                    any_def = ds
-                if ds.lower().startswith("original:") and not original:
-                    original = ds
-                if ds.lower().startswith("aristotelian:") and not arist:
-                    arist = ds
-
-            if not original:
-                for d in defs:
-                    ds = d.strip()
-                    if ds and not ds.lower().startswith("aristotelian:"):
-                        original = ds
-                        break
-
-            out[k] = {"original": original, "aristotelian": arist, "any": any_def}
-
-        return out
-
-    gt_defs = load_defs_human(human_ttl)
-    pr_defs = load_defs_model(model_ttl)
-
-    rows = []
-    for _, r in df_matches.iterrows():
-        if r["Label Match"] != "✔":
-            continue
-
-        gt = r["Ground Truth Term"]
-        pr = r["Matched Term"]
-
-        h = gt_defs.get(gt, {})
-        m = pr_defs.get(pr, {})
-
-        # Prefer Aristotelian if present, otherwise fall back to original/any
-        d1 = h.get("aristotelian") or h.get("original") or h.get("any") or ""
-        d2 = m.get("aristotelian") or m.get("original") or m.get("any") or ""
-
-
-        if d1 and d2:
-            v1 = model.encode([d1], normalize_embeddings=True)[0]
-            v2 = model.encode([d2], normalize_embeddings=True)[0]
-            sim = float(np.dot(v1, v2))
-        else:
-            sim = None
-
-        rows.append({
-            "Ground Truth Term": gt,
-            "Matched Term": pr,
-            "Human definition": d1,
-            "Aristotelian generated": d2,
-            "definition_cosine_similarity": None if sim is None else round(sim, 4)
-        })
-
-    return pd.DataFrame(rows)
-
-
-# =================================================
 # HIERARCHY EVALUATION 
 # =================================================
 def hierarchy_eval(df_matches, df_gt, df_pr):
@@ -992,7 +1198,7 @@ def hierarchy_eval(df_matches, df_gt, df_pr):
 
         if r["Label Match"] != "✔":
             rows.append({
-                "GT Class": r["Ground Truth Term"],
+                "GT Class": r["GT term"],
                 "Pred Class": None,
                 "GT BFO": gt_bfo,
                 "Pred BFO": None,
@@ -1003,8 +1209,8 @@ def hierarchy_eval(df_matches, df_gt, df_pr):
         match = "✔" if (gt_bfo and pr_bfo and gt_bfo == pr_bfo) else "HIERARCHY_MISMATCH"
 
         rows.append({
-            "GT Class": r["Ground Truth Term"],
-            "Pred Class": r["Matched Term"],
+            "GT Class": r["GT term"],
+            "Pred Class": r["LLM term"],
             "GT BFO": gt_bfo,
             "Pred BFO": pr_bfo,
             "Hierarchy Match": match
@@ -1028,23 +1234,114 @@ def hierarchy_eval(df_matches, df_gt, df_pr):
 
     return df, df_f1
 
+def local_parent_hierarchy_eval(df_matches, df_gt, df_pr):
+    gt_parent_by_uri = dict(zip(df_gt["URI"].astype(str), df_gt["Local Parent"]))
+    pr_parent_by_uri = dict(zip(df_pr["URI"].astype(str), df_pr["Local Parent"]))
+
+    rows = []
+    for _, r in df_matches.iterrows():
+        gt_uri = r.get("GT URI")
+        pr_uri = r.get("Pred URI")
+
+        gt_parent = gt_parent_by_uri.get(str(gt_uri)) if gt_uri else None
+        pr_parent = pr_parent_by_uri.get(str(pr_uri)) if pr_uri else None
+
+        if r["Label Match"] != "✔":
+            rows.append({
+                "GT Class": r["GT term"],
+                "Pred Class": None,
+                "GT Local Parent": gt_parent,
+                "Pred Local Parent": None,
+                "Local Parent Hierarchy Match": "NO_PREDICTION"
+            })
+            continue
+
+        # both roots -> count as match
+        if gt_parent is None and pr_parent is None:
+            match = "✔"
+        elif gt_parent is not None and pr_parent is not None and norm(gt_parent) == norm(pr_parent):
+            match = "✔"
+        else:
+            match = "HIERARCHY_MISMATCH"
+
+        rows.append({
+            "GT Class": r["GT term"],
+            "Pred Class": r["LLM term"],
+            "GT Local Parent": gt_parent,
+            "Pred Local Parent": pr_parent,
+            "Local Parent Hierarchy Match": match
+        })
+
+    df = pd.DataFrame(rows)
+
+    tp = (df["Local Parent Hierarchy Match"] == "✔").sum()
+    fp = (df["Local Parent Hierarchy Match"] == "HIERARCHY_MISMATCH").sum()
+    fn = (df["Local Parent Hierarchy Match"] == "NO_PREDICTION").sum()
+
+    prec = tp / (tp + fp) if (tp + fp) else 0.0
+    rec = tp / (tp + fn) if (tp + fn) else 0.0
+    f1 = (2 * prec * rec / (prec + rec)) if (prec + rec) else 0.0
+
+    df_f1 = pd.DataFrame([{
+        "Precision": round(prec, 4),
+        "Recall": round(rec, 4),
+        "F1": round(f1, 4)
+    }])
+
+    return df, df_f1
+
+def lexical_label_match_f1(df_matches, df_gt, df_pr):
+    lexical_tp = (
+        (df_matches["Label Match"] == "✔") &
+        (df_matches["Match type"] == "lexical")
+    ).sum()
+
+    precision = lexical_tp / len(df_pr) if len(df_pr) else 0.0
+    recall = lexical_tp / len(df_gt) if len(df_gt) else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+
+    return pd.DataFrame([{
+        "Precision": round(precision, 4),
+        "Recall": round(recall, 4),
+        "F1": round(f1, 4)
+    }])
+
 # =================================================
 # MAIN ENTRY 
 # =================================================
-def run_full_eval(human_ttl: str, model_ttl: str):
+def run_full_eval(
+    human_ttl: str,
+    model_ttl: str,
+    lexical_threshold: float = 0.80,
+    semantic_threshold: float = 0.75,
+    semantic_model_name: str = "all-MiniLM-L6-v2",
+):
     df_gt = extract_ground_truth_classes(human_ttl)
     df_pr = extract_model_classes(model_ttl)
 
-    df_matches, df_metrics = label_match_eval(df_gt, df_pr)
+    df_matches, df_metrics = label_match_eval(
+        df_gt,
+        df_pr,
+        human_ttl=human_ttl,
+        model_ttl=model_ttl,
+        lexical_threshold=lexical_threshold,
+        semantic_threshold=semantic_threshold,
+        semantic_model_name=semantic_model_name,
+    )
+
+    df_lexical_metrics = lexical_label_match_f1(df_matches, df_gt, df_pr)
+
     df_hier, df_hier_f1 = hierarchy_eval(df_matches, df_gt, df_pr)
-    df_defs = definition_similarity(df_matches, human_ttl, model_ttl)
+    df_local_hier, df_local_hier_f1 = local_parent_hierarchy_eval(df_matches, df_gt, df_pr)
 
     return {
         "df_groundtruth": df_gt,
         "df_predicted": df_pr,
         "df_results": df_matches,
+        "df_lexical_metrics": df_lexical_metrics,
         "df_metrics": df_metrics,
-        "df_matched_def_sim": df_defs,
         "res_evaluation": df_hier,
         "res_f1": df_hier_f1,
+        "res_local_parent_evaluation": df_local_hier,
+        "res_local_parent_f1": df_local_hier_f1,
     }
