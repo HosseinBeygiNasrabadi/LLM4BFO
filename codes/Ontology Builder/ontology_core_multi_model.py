@@ -21,10 +21,19 @@ from rdflib import Graph, RDF, RDFS, OWL, Namespace, URIRef
 from rdflib.namespace import SKOS
 import requests
 from rdflib.term import Literal
-
+import unicodedata
+from anthropic import Anthropic
 from rdflib.namespace import DC, DCTERMS
-SCHEMA = Namespace("http://schema.org/")
 
+import httpx
+from anthropic import Anthropic
+
+import time
+import random
+import traceback
+
+SCHEMA = Namespace("http://schema.org/")
+OBO = Namespace("http://purl.obolibrary.org/obo/")
 # ---------------------------
 # helpers
 # ---------------------------
@@ -101,6 +110,13 @@ def _repair_split_prefixed_names(ttl: str) -> str:
     )
     return rx.sub(r"\1\2\3", ttl or "")
 
+def _repair_split_subject_prefixed_names(ttl: str) -> str:
+    rx = re.compile(
+        r'^(\s*[A-Za-z][\w-]*:)(\S+)\s+(\S+)(\s+a\s+owl:Class\s*;)',
+        re.MULTILINE | re.UNICODE
+    )
+    return rx.sub(r'\1\2\3\4', ttl or "")
+
 def _strip_code_fences(s: str) -> str:
     s = (s or "").strip()
     if not s:
@@ -111,6 +127,159 @@ def _strip_code_fences(s: str) -> str:
     lines = [ln for ln in lines if not ln.strip().startswith("```")]
     return "\n".join(lines).strip()
 
+
+_SAFE_LOCAL_NAME_RX = re.compile(r"[^a-z0-9]+")
+
+def _safe_local_name(label: str) -> str:
+    """
+    Convert a label into a safe ASCII Turtle local name.
+    Examples:
+      "database extract, transform, and load process" -> "databaseextracttransformandloadprocess"
+      "identification d'un patient" -> "identificationdunpatient"
+      "spécification de produit médicamenteux" -> "specificationdeproduitmedicamenteux"
+    """
+    s = (label or "").strip().lower()
+
+    # remove accents/diacritics
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+
+    # normalize a few special letters
+    s = s.replace("ß", "ss")
+
+    # remove apostrophes first
+    s = s.replace("'", "").replace("’", "").replace("`", "")
+
+    # remove everything except ascii letters and digits
+    s = _SAFE_LOCAL_NAME_RX.sub("", s)
+
+    # avoid empty or digit-starting local names
+    if not s:
+        s = "term"
+    if s[0].isdigit():
+        s = "c" + s
+
+    return s
+
+def _repair_unsafe_subject_prefixed_names(ttl: str) -> str:
+    """
+    Repairs unsafe prefixed/default-prefixed subject names in owl:Class declarations.
+    """
+    rx = re.compile(
+        r"^(\s*)([A-Za-z][\w-]*:|:)(.+?)(\s+a\s+owl:Class\s*;)\s*$",
+        re.MULTILINE,
+    )
+
+    def repl(m):
+        indent = m.group(1)
+        prefix = m.group(2)
+        raw_local = m.group(3).strip()
+        suffix = m.group(4)
+
+        safe_local = _safe_local_name(raw_local)
+        return f"{indent}{prefix}{safe_local}{suffix}"
+
+    return rx.sub(repl, ttl or "")
+
+def _repair_unsafe_object_prefixed_names(ttl: str) -> str:
+    rx = re.compile(
+        r'(\brdfs:subClassOf\s+)([A-Za-z][\w-]*:|:)([^;\s.]+)(\s*[.;])'
+    )
+
+    protected_prefixes = {
+        "rdf", "rdfs", "owl", "xsd", "skos", "dc", "dct", "dcterms", "bfo", "obo"
+    }
+
+    def repl(m):
+        head = m.group(1)
+        prefix = m.group(2)
+        raw_local = m.group(3).strip()
+        tail = m.group(4)
+
+        prefix_name = prefix[:-1] if prefix.endswith(":") else prefix
+
+        # do not rewrite external ontology CURIEs
+        if prefix_name in protected_prefixes:
+            return m.group(0)
+
+        safe_local = _safe_local_name(raw_local)
+        return f"{head}{prefix}{safe_local}{tail}"
+
+    return rx.sub(repl, ttl or "")
+
+def _escape_inner_quotes_in_definition_lines(ttl: str) -> str:
+    out = []
+    rx = re.compile(r'^(?P<prefix>\s*skos:definition\s*")(?P<body>.*)(?P<suffix>"@en\s*;\s*)$')
+    for ln in ttl.splitlines():
+        m = rx.match(ln)
+        if m:
+            body = m.group("body")
+            body = body.replace('\\"', '__ESCAPED_QUOTE__')
+            body = body.replace('"', '\\"')
+            body = body.replace('__ESCAPED_QUOTE__', '\\"')
+            ln = f'{m.group("prefix")}{body}{m.group("suffix")}'
+        out.append(ln)
+    return "\n".join(out)
+
+_TRANSIENT_PATTERNS = (
+    "incomplete chunked read",
+    "peer closed connection",
+    "remoteprotocolerror",
+    "connection reset by peer",
+    "timed out",
+    "timeout",
+    "connection aborted",
+    "server disconnected",
+)
+
+def _is_transient_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(p in msg for p in _TRANSIENT_PATTERNS)
+
+def _call_llm_with_retry(
+    provider: str,
+    api_key: str,
+    model: str,
+    system_text: str,
+    user_prompt: str,
+    attempts: int = 4,
+) -> str:
+    last_exc = None
+    for i in range(attempts):
+        try:
+            return _call_llm(
+                provider=provider,
+                api_key=api_key,
+                model=model,
+                system_text=system_text,
+                user_prompt=user_prompt,
+            )
+        except Exception as e:
+            last_exc = e
+            if i == attempts - 1 or not _is_transient_error(e):
+                raise
+            sleep_s = (2 ** i) + random.uniform(0.0, 0.5)
+            print(f"[Retry {i+1}/{attempts}] transient model-call failure: {type(e).__name__}: {e}")
+            time.sleep(sleep_s)
+    raise last_exc
+
+def _validate_generated_ttl_completeness(ttl: str) -> None:
+    lines = ttl.strip().splitlines()
+    if not lines:
+        raise ValueError("Generated TTL is empty.")
+
+    if not ttl.strip().endswith("."):
+        raise ValueError("Generated TTL is incomplete: missing final '.'.")
+
+    class_start_count = sum(1 for ln in lines if " a owl:Class ;" in ln)
+    subclass_count = sum(1 for ln in lines if "rdfs:subClassOf " in ln and ln.strip().endswith("."))
+
+    if subclass_count < class_start_count:
+        raise ValueError(
+            f"Generated TTL is incomplete: {class_start_count} class starts but only "
+            f"{subclass_count} completed subclass lines."
+        )
+     
 # ---------------------------
 # Provider calls
 # ---------------------------
@@ -127,12 +296,12 @@ def _call_openai(api_key: str, model: str, system_text: str, user_prompt: str) -
     )
     return resp.output_text
 
-
+"""
 def _call_anthropic(api_key: str, model: str, system_text: str, user_prompt: str) -> str:
-    """
+    \"""
     Anthropic Messages API (direct HTTP). Requires: pip install requests
     Uses the same system/user content; prompt content is unchanged.
-    """
+    \"""
     url = "https://api.anthropic.com/v1/messages"
     headers = {
         "x-api-key": api_key,
@@ -153,6 +322,33 @@ def _call_anthropic(api_key: str, model: str, system_text: str, user_prompt: str
             parts.append(blk.get("text", ""))
     return "".join(parts).strip()
 
+"""
+
+def _call_anthropic(api_key: str, model: str, system_text: str, user_prompt: str) -> str:
+    client = Anthropic(
+        api_key=api_key,
+        timeout=httpx.Timeout(1800.0, connect=10.0, read=1800.0, write=60.0),
+        max_retries=5,
+    )
+
+    message = client.messages.create(
+        model=model,
+        max_tokens=50000,
+        system=system_text,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+
+    print(f"[Anthropic] stop_reason={getattr(message, 'stop_reason', None)}")
+    print(f"[Anthropic] usage={getattr(message, 'usage', None)}")
+
+    parts = []
+    for block in message.content:
+        if getattr(block, "type", None) == "text":
+            parts.append(block.text)
+
+    text = "".join(parts).strip()
+    print(f"[Anthropic] output_chars={len(text)}")
+    return text
 
 def _call_gemini(api_key: str, model: str, system_text: str, user_prompt: str) -> str:
     """
@@ -207,6 +403,14 @@ def _clean_ws(s: str) -> str:
     return s.strip()
 
 _DEF_NAME_RX = re.compile(r"(definition|description|textdefinition|gloss|documentation|explanation|note)", re.IGNORECASE)
+
+_EXCLUDED_DEF_PROPS = {
+    OBO["IAO_0000119"],  # definition source
+    DCTERMS.source,
+    DC.source,
+}
+
+_EXCLUDED_DEF_LABEL_RX = re.compile(r"source|citation|reference", re.IGNORECASE)
 
 def _local_name(uri: str) -> str:
     # fragment after # or last path segment
@@ -269,11 +473,20 @@ def discover_definition_predicates(g: Graph) -> List[URIRef]:
             candidates.add(p)
 
     def looks_definition_like(p: URIRef) -> bool:
+        if p in _EXCLUDED_DEF_PROPS:
+            return False
+
         p_str = str(p)
         name = _local_name(p_str)
         labels = [str(lit) for lit in g.objects(p, RDFS.label)]
-        return _DEF_NAME_RX.search(name) or any(_DEF_NAME_RX.search(l) for l in labels)
 
+        if _EXCLUDED_DEF_LABEL_RX.search(name):
+            return False
+        if any(_EXCLUDED_DEF_LABEL_RX.search(l) for l in labels):
+            return False
+
+        return _DEF_NAME_RX.search(name) or any(_DEF_NAME_RX.search(l) for l in labels)
+    
     for p in sorted([p for p in candidates if isinstance(p, URIRef)], key=lambda u: str(u)):
         if p not in seen and looks_definition_like(p):
             add(p)
@@ -1024,15 +1237,8 @@ def run_pipeline(
             if not terms:
                 raise ValueError("No terms extracted from PDF Section 3.")
 
-            def _parent_num(n: str) -> str:
-                parts = n.split(".")
-                return ".".join(parts[:-1]) if len(parts) > 2 else ""
-
-            parent_map: Dict[str, str] = {}
-            nums = {t["num"] for t in terms}
-            for t in terms:
-                p = _parent_num(t["num"])
-                parent_map[t["num"]] = p if p in nums else ""
+            # NOTE: Do NOT derive local hierarchy from numbering for PDF (treat like XLSX)
+            parent_map: Dict[str, str] = {t["num"]: "" for t in terms}
 
             log(f"Extracted {len(terms)} term(s) from PDF Section 3:")
             for t in terms:
@@ -1047,7 +1253,9 @@ def run_pipeline(
                 log(f" - {t['num']}: {t['label']}")
 
         elif ext in (".ttl", ".owl"):
-            terms, parent_map = load_rdf_terms_with_hierarchy(input_path)
+            terms, _ignored_parent_map = load_rdf_terms_with_hierarchy(input_path)
+
+            parent_map = {t["num"]: "" for t in terms}
 
             log(f"Loaded {len(terms)} term(s) from RDF (TTL/OWL):")
             for t in terms:
@@ -1284,125 +1492,113 @@ Operational tests for unseen terms:
         # ----------------
         # PROMPT
         # ----------------
-        def _build_hierarchy_edges(terms_with_defs: List[Dict[str, str]], parent_map: Dict[str, str]) -> List[Dict[str, str]]:
-            num_to_term = {t["num"]: t for t in terms_with_defs}
-            edges: List[Dict[str, str]] = []
-            for child_num, parent_num in (parent_map or {}).items():
-                if not parent_num:
-                    continue
-                if child_num not in num_to_term or parent_num not in num_to_term:
-                    continue
-                edges.append({
-                    "child_num": child_num,
-                    "child_label": num_to_term[child_num]["label"],
-                    "parent_num": parent_num,
-                    "parent_label": num_to_term[parent_num]["label"],
-                })
-            return edges
-
+        
         def build_prompt(
             terms_with_defs: List[Dict[str, str]],
-            parent_map: Dict[str, str],
-            hierarchy_edges: List[Dict[str, str]],
             meta: Dict[str, str],
         ) -> str:
             return f"""You are an ontology engineer. Output ONLY valid Turtle (no markdown).
 
-INPUT
-- Source: Input file (classes & definitions).
+        INPUT
+        - Source: Input file (classes & definitions).
 
-- Ontology IRI: {meta['ontology_iri']}
-- Entity IRI policy: use the ontology IRI with fragment '#<entitylabel>', where <entitylabel> is the lowercase class label with spaces removed.
-  Example: {meta['ontology_iri']}#fracture
-- Numbering hierarchy is authoritative for domain subclassing (if any).
+        - Ontology IRI: {meta['ontology_iri']}
+        - Entity IRI policy: use the ontology IRI with fragment '#<entitylabel>', where <entitylabel> is the lowercase class label with spaces removed.
+        Example: {meta['ontology_iri']}#fracture
 
-TERMS (number, label, definition):
-{json.dumps(terms_with_defs, ensure_ascii=False, indent=2)}
+        HIERARCHY INPUT
+        - No local hierarchy is provided (no numbering parent map, no subclass edges).
+        - You MUST infer the local (domain) rdfs:subClassOf hierarchy yourself, strictly and deterministically, using only:
+        (i) term labels, (ii) term definitions, and (iii) the 'num' field when it has dotted-decimal structure.
 
-NUMBERING PARENT MAP (child_num → parent_num; empty string = no parent):
-{json.dumps(parent_map, ensure_ascii=False, indent=2)}
+        TERMS (number, label, definition):
+        {json.dumps(terms_with_defs, ensure_ascii=False, indent=2)}
 
-LOCAL CLASS HIERARCHY (child → parent; derived from input, local classes only):
-{json.dumps(hierarchy_edges, ensure_ascii=False, indent=2)}
+        TASKS
+        A) Create one domain class per term (plus optional minted intermediates if needed).
+        - Labels MUST be lowercase words with spaces only (no hyphen/underscore).
+        - IRI local name for each class = label with spaces removed (lowercase), appended after '#'.
+            Example: label "upper yield strength" → IRI <{meta['ontology_iri']}#upperyieldstrength>.
 
-TASKS
-A) Create one domain class per term (plus optional minted intermediates if needed).
-   - Labels MUST be lowercase words with spaces only (no hyphen/underscore).
-   - IRI local name for each class = label with spaces removed (lowercase), appended after '#'.
-     Example: label "upper yield strength" → IRI <{meta['ontology_iri']}#upperyieldstrength>.
+        - For extracted terms (in the TERMS list), use the exact provided definition text as `skos:definition` (do not paraphrase). This is the "original" definition.
+        - For minted classes (not in TERMS), generate a new intensional definition (1–3 sentences). This is the "original" definition.
 
-   - For extracted terms (in the TERMS list), use the exact provided definition text as `skos:definition` (do not paraphrase). This is the "original" definition.
-   - For minted classes (not in TERMS), generate a new intensional definition (1–3 sentences). This is the "original" definition.
+        - For every domain class (including minted classes), generate an Aristotelian genus–differentia textual definition.
+            The Aristotelian definition MUST:
+            be a single English sentence,
+            start with an indefinite article + the label (e.g. "a corrosion test is a process that …"),
+            have the form "a/an <label> is a <genus> that <differentia>",
+            use as genus the immediate domain parent class if it exists; otherwise use the selected BFO parent as genus,
+            state only necessary characteristics that distinguish the class from its siblings,
+            remain faithful to the meaning of the original definition.
 
-   - For every domain class (including minted classes), generate an Aristotelian genus–differentia textual definition.
-     The Aristotelian definition MUST:
-       be a single English sentence,
-       start with an indefinite article + the label (e.g. "a corrosion test is a process that …"),
-       have the form "a/an <label> is a <genus> that <differentia>",
-       use as genus the immediate domain parent class if it exists; otherwise use the selected BFO parent as genus,
-       state only necessary characteristics that distinguish the class from its siblings,
-       remain faithful to the meaning of the original definition.
+        - In the Turtle:
+            - Each class MUST have exactly two `skos:definition` literals.
+            - The first `skos:definition` literal MUST contain the original definition and MUST start with "Original: ".
+            - The second `skos:definition` literal MUST contain only the Aristotelian genus–differentia definition and MUST start with "Aristotelian: ".
+        - For minted classes (not in TERMS), generate:
+            - a new intensional source original definition (1–3 sentences), emitted as the first `skos:definition` literal starting with "Original: ",
+            - an Aristotelian definition built from that original definition, emitted as the second `skos:definition` literal starting with "Aristotelian: ".
 
-   - In the Turtle:
-       - Each class MUST have exactly two `skos:definition` literals.
-       - The first `skos:definition` literal MUST contain the original definition and MUST start with "Original: ".
-       - The second `skos:definition` literal MUST contain only the Aristotelian genus–differentia definition and MUST start with "Aristotelian: ".
-   - For minted classes (not in TERMS), generate:
-       - a new intensional source original definition (1–3 sentences), emitted as the first `skos:definition` literal starting with "Original: ",
-       - an Aristotelian definition built from that original definition, emitted as the second `skos:definition` literal starting with "Aristotelian: ".
+        - If multiple terms denote specific states or grades of the same property (e.g., hard/medium/soft or small/medium/big),
+            then mint a new superclass for that property (e.g., <domain> state or <domain> size).
+            Place the state terms as subclasses of this new class.
+            The minted superclass should be aligned to BFO:quality, since it represents a condition/property of the object,
+            not a material object.
+        - If a definition contains explicit categorical boundaries (e.g., "- Small: < x - Medium: y - Big: > z" or "- Short: < x - Medium: y - High: > z"),
+            then mint one new superclass (e.g., "<domain> size") and create subclasses for each category (e.g., "small <domain>", "medium <domain>", "big <domain>").
 
-   - If multiple terms denote specific states or grades of the same property (e.g., hard/medium/soft or small/medium/big), 
-      then mint a new superclass for that property (e.g., <domain> state or <domain> size). 
-      Place the state terms as subclasses of this new class. 
-      The minted superclass should be aligned to BFO:quality, since it represents a condition/property of the object, 
-      not a material object.
-   - If a definition contains explicit categorical boundaries (e.g., "- Small: < x - Medium: y - Big: > z" or "- Short: < x - Medium: y - High: > z"), 
-      then mint one new superclass (e.g., "<domain> size") and create subclasses for each category (e.g., "small <domain>", "medium <domain>", "big <domain>"). 
+        B) Domain subclassing (YOU MUST INFER THIS):
+        - Infer a local domain hierarchy and implement it using rdfs:subClassOf among the domain classes you mint.
+        - Each class may have AT MOST ONE inferred domain parent.
+        - The inferred hierarchy MUST be acyclic (no cycles).
+        - If 'num' looks like dotted-decimal numbering (e.g., 3.2.1), you MUST treat the closest existing prefix as a strong prior parent candidate
+            (e.g., 3.2 is a candidate parent of 3.2.1), but you may override this only if the definition clearly contradicts it.
+        - If 'num' is sequential (e.g., 1,2,3...) treat it as non-hierarchical.
+        - You may mint intermediate grouping classes if needed (especially for state/grade groupings), and place terms under them.
 
-B) Domain subclassing:
-   - If a term has a parent number, add rdfs:subClassOf to the **domain class** minted for that parent term (in addition to BFO mapping).
-   - If a local hierarchy edge is provided for a class, you MUST implement it as the class’s rdfs:subClassOf (domain parent). Do not contradict or drop these edges.
+        C) BFO mapping:
+        - Because each class must have exactly one rdfs:subClassOf, apply BFO mapping as follows:
+            * If a class has NO inferred domain parent (i.e., it is a root in your inferred local hierarchy),
+            then its rdfs:subClassOf MUST be the MOST SPECIFIC BFO class (BFO 2020 IRIs only).
+            * If a class HAS an inferred domain parent, then its rdfs:subClassOf MUST be that domain parent.
+        - Use the BFO definitions, taxonomy, and decision logic provided below.
+        - Do NOT invent new BFO IRIs; only use those in the provided BFO text.
 
-C) BFO mapping:
-   - Add **exactly one** rdfs:subClassOf to the most specific BFO class (BFO 2020 IRIs only).
-   - Use the BFO definitions, taxonomy, and decision logic provided below.
-   - For each domain class (including new ones), choose the MOST SPECIFIC BFO category and use its exact IRI as rdfs:subClassOf.
-   - Do NOT invent new BFO IRIs; only use those in the provided BFO text.
+        D) Ontology header (MUST include, values already resolved from the input and today’s date):
+        @prefix declarations (rdf, rdfs, owl, xsd, skos, dc, dct) ;
+        <{meta['ontology_iri']}> a owl:Ontology ;
+            rdfs:label "{meta['label']}"@en ;
+            dc:contributor "LLM" ;
+            dc:license <https://creativecommons.org/publicdomain/zero/1.0/> ;
+            dcterms:description "{meta['description']}"@en ;
+            dcterms:title "{meta['title']}"@en ;
+            owl:versionInfo "{meta['version']}" ;
+            owl:imports <http://purl.obolibrary.org/obo/bfo/2020/bfo.owl> .
 
-D) Ontology header (MUST include, values already resolved from the input and today’s date):
-@prefix declarations (rdf, rdfs, owl, xsd, skos, dc, dct) ;
-<{meta['ontology_iri']}> a owl:Ontology ;
-    rdfs:label "{meta['label']}"@en ;
-    dc:contributor "LLM" ;
-    dc:license <https://creativecommons.org/publicdomain/zero/1.0/> ;
-    dcterms:description "{meta['description']}"@en ;
-    dcterms:title "{meta['title']}"@en ;
-    owl:versionInfo "{meta['version']}" ;
-    owl:imports <http://purl.obolibrary.org/obo/bfo/2020/bfo.owl> .
+        E) Class blocks (NO rdfs:isDefinedBy):
+        <CLASS_IRI> a owl:Class ;
+            rdfs:label "<lowercase label>"@en ;
+            skos:definition "Original: <original definition text>. " @en ;
+            skos:definition "Aristotelian: <Aristotelian genus–differentia definition in the form 'a/an <label> is a <genus> that <differentia>'>."@en ;
+            rdfs:subClassOf <DOMAIN_PARENT_IRI_OR_BFO_IRI> .
 
-E) Class blocks (NO rdfs:isDefinedBy):
-<CLASS_IRI> a owl:Class ;
-    rdfs:label "<lowercase label>"@en ;
-    skos:definition "Original: <original definition text>. " @en ;
-    skos:definition "Aristotelian: <Aristotelian genus–differentia definition in the form 'a/an <label> is a <genus> that <differentia>'>."@en ;
-    rdfs:subClassOf <DOMAIN_PARENT_IRI> .
+        STRICT RULES
+        - TTL only; no commentary.
+        - Each class MUST have exactly one rdfs:subClassOf.
+        - If an inferred domain parent exists, use it as rdfs:subClassOf; otherwise use BFO.
+        - Do not output any extra helper comments, JSON, or explanations.
 
-STRICT RULES
-- TTL only; no commentary.
-- Each class MUST have exactly one rdfs:subClassOf.
-- Domain parent takes precedence over BFO parent.
-- If no domain parent, then use BFO.
+        BFO reference (2020 subset + decision logic):
+        {BFO_TEXT}
+        """.strip()
 
-BFO reference (2020 subset + decision logic):
-{BFO_TEXT}
-""".strip()
-
-        hierarchy_edges = _build_hierarchy_edges(terms, parent_map)
-        prompt = build_prompt(terms, parent_map, hierarchy_edges, META)
+        prompt = build_prompt(terms, META)
         system_text = "You are a BFO-aligned ontology engineer who outputs only valid Turtle syntax."
 
         log("Calling model...")
-        raw_text = _call_llm(
+
+        raw_text = _call_llm_with_retry(
             provider=provider,
             api_key=api_key,
             model=model_label,
@@ -1420,38 +1616,96 @@ BFO reference (2020 subset + decision logic):
         # 3) remove any ``` fences (if any)
         ttl_output = _strip_code_fences(raw_text)
 
-        # 4) normalize prefixes (your existing function)
+        # 4) escape inner quotes inside skos:definition literals
+        ttl_output = _escape_inner_quotes_in_definition_lines(ttl_output)
+
+        # 5) normalize prefixes
         ttl_output = _normalize_standard_prefixes(ttl_output)
 
-        # repair broken prefixed names like `label:foo bar`
+        # 6) repair broken prefixed names like `label:foo bar`
         ttl_output = _repair_split_prefixed_names(ttl_output)
+
+        ttl_output = _repair_split_subject_prefixed_names(ttl_output)
+
+        ttl_output = _repair_unsafe_subject_prefixed_names(ttl_output)
+
+        ttl_output = _repair_unsafe_object_prefixed_names(ttl_output)
 
         if not ttl_output.strip().startswith("@prefix"):
             raise ValueError("Model did not return TTL starting with @prefix. Please re-run or reduce input size.")
 
-        with open(ttl_out, "w", encoding="utf-8") as f:
-            f.write(ttl_output)
-        log(f"TTL saved to: {ttl_out}")
-
-        # ===== semantic validation for the OWL import triple =====
-        _validate_bfo_import(ttl_out, META["ontology_iri"])
-        log("BFO import triple validated successfully (owl:imports is correct).")
-
         try:
+            # quick truncation diagnostics
+            log("LAST 800 CHARS OF MODEL OUTPUT:")
+            log(repr(ttl_output[-800:]))
+
+            if not ttl_output.strip().startswith("@prefix"):
+                raise ValueError("Model did not return TTL starting with @prefix. Please re-run or reduce input size.")
+
+            # obvious truncation guard
+            if not ttl_output.strip().endswith("."):
+                raise ValueError("Generated TTL appears incomplete: it does not end with a final '.'.")
+
+            # detect unfinished class block at end
+            tail_lines = ttl_output.strip().splitlines()[-6:]
+            open_class_near_end = any(" a owl:Class ;" in ln for ln in tail_lines)
+            has_subclass_near_end = any("rdfs:subClassOf" in ln for ln in tail_lines)
+            if open_class_near_end and not has_subclass_near_end:
+                raise ValueError("Generated TTL appears truncated: last class block is incomplete.")
+
+            _validate_generated_ttl_completeness(ttl_output)
+
+            # first: validate in memory
             g2 = Graph()
             g2.parse(data=ttl_output, format="turtle")
-            log("TTL parsed successfully. Ontology is syntactically valid.")
+            log("TTL parsed successfully. Ontology is syntactically valid.")    
+
         except Exception as e:
             log(f"TTL parsing failed (first try): {e}")
 
-            # one more repair pass (sometimes multiple breaks exist)
-            ttl_output2 = _repair_split_prefixed_names(ttl_output)
+            # Do not attempt syntax repair if the output is clearly incomplete/truncated.
+            if "appears incomplete" in str(e).lower():
+                raise
+
+            ttl_output2 = _escape_inner_quotes_in_definition_lines(ttl_output)
+            ttl_output2 = _repair_split_prefixed_names(ttl_output2)
+            ttl_output2 = _repair_split_subject_prefixed_names(ttl_output2)
+            ttl_output2 = _repair_unsafe_subject_prefixed_names(ttl_output2)
+            ttl_output2 = _repair_unsafe_object_prefixed_names(ttl_output2)
+            ttl_output2 = _normalize_standard_prefixes(ttl_output2)
+
+            log("LAST 800 CHARS OF REPAIRED MODEL OUTPUT:")
+            log(repr(ttl_output2[-800:]))
+
+            if not ttl_output2.strip().startswith("@prefix"):
+                raise ValueError("Repaired TTL does not start with @prefix.")
+
+            if not ttl_output2.strip().endswith("."):
+                raise ValueError("Repaired TTL appears incomplete: it does not end with a final '.'.")
+
+            tail_lines = ttl_output2.strip().splitlines()[-6:]
+            open_class_near_end = any(" a owl:Class ;" in ln for ln in tail_lines)
+            has_subclass_near_end = any("rdfs:subClassOf" in ln for ln in tail_lines)
+            if open_class_near_end and not has_subclass_near_end:
+                raise ValueError("Repaired TTL appears truncated: last class block is incomplete.")
+
             g2 = Graph()
             g2.parse(data=ttl_output2, format="turtle")
             ttl_output = ttl_output2
             log("TTL parsed successfully after repair pass.")
 
+        # save only after syntax is valid
+        with open(ttl_out, "w", encoding="utf-8") as f:
+            f.write(ttl_output)
+        log(f"TTL saved to: {ttl_out}")
+
+        # semantic validation that needs the saved file
+        _validate_bfo_import(ttl_out, META["ontology_iri"])
+        log("BFO import triple validated successfully (owl:imports is correct).")
+
+
     except Exception as e:
-        log(f"[Error] {e}")
+        log(f"[Error] {type(e).__name__}: {e}")
+        log(traceback.format_exc())
 
     return "\n".join(logs)
