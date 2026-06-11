@@ -6,11 +6,11 @@ authors:
     family-names: Beygi Nasrabadi
   - given-names: Farzaneh
     family-names: Mahdavi
-version: "1.0.0"
-date-released: "2026-02-11"
+version: "1.0.1"
+date-released: "2026-05-29"
 identifiers:
   - type: url
-    value: "https://github.com/HosseinBeygiNasrabadi/LLM4BFO"
+    value: "https://github.com/ISE-FIZKarlsruhe/LLM4BFO"
 license: "MIT"
 abstract: "LLM4BFO is a toolkit for building BFO-compliant ontologies using large language models."
 keywords:
